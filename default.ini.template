@@ -1,11 +1,13 @@
 exclude.files = --exclude=.ssh\* --exclude=\*tmp\* --exclude=\*.viminfo\* --exclude=\*.thumbs\* --exclude=\*.bash_history\* --exclude=\*cache\*  --exclude=\*backup\* --exclude=\*import\*
-
+ 
+# defaults
 db.port = 3306
-
 sync.exclude.file       = ${wizard.path}/sync.exclude
-
+ssh.temp                = ${project.basedir}/build/
+env.JOB_NAME            = ${phing.project.name}.dev
 admin.email             = email@example.com
 
+# backup
 backup.dir              = /srv/backup
 
 backup.ssh.user         = ubuntu
@@ -16,7 +18,7 @@ backup.db.user          = backup
 backup.db.password      = password
 backup.db.name          = ${project.name.safe}
 
-ssh.temp = ${ssh.path}
+
 
 # test
 test.server.env  = test
@@ -40,3 +42,4 @@ dev.db.host     = 127.0.0.1
 dev.db.user     = root
 dev.db.pass     = toor
 dev.db.name     = ${project.name.safe}_${environment} 
+dev.server.env = dev
