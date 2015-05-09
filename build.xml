@@ -1,0 +1,1117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project name="builddefault" description="Wizard" default="help">
+
+    <!-- <taskdef name="randomstring" classname="tasks.RandomStringTask" /> -->
+    <property name="mystring" value="null" />
+
+    <target name="help" description="help">
+        <exec command="${wizard.path}/vendor/bin/phing -f ${wizard.path}/build.xml -l" outputProperty="phing_targets" />
+        <echo>Please select a target.</echo>
+        <echo>${phing_targets}</echo>
+    </target>
+
+    <target name="random" description="Prints a random string">
+        <randomstring propertyName="mystring" />
+        <echo message="${mystring}" />
+    </target>
+
+    <target name="build" depends="init, install" description="Do a full build"/>
+
+    <exec executable="php" outputProperty="wizard.path">
+    <arg value="-r" />
+    <arg value="
+echo dirname('${make}');
+"/>
+    </exec>
+
+    <echo>wizard.path = ${wizard.path}</echo>
+
+    <tstamp>
+        <format pattern="%Y.%m.%d_%H.%M.%S" property="build.time"/>
+    </tstamp>
+
+    <target name="test" depends="-load-properties, -setup-dirs, -clean-build">
+        <echo msg="Running tests"/>
+        <phingcall target="phpcs" />
+        <phingcall target="phpmd" />
+        <phingcall target="phploc" />
+        <phingcall target="phpcpd" />
+        <phingcall target="pdepend" />
+    </target>
+
+    <target name="phpunit" depends="-load-properties, -setup-dirs, -clean-build">
+        <echo msg="Starting php unit tests" />
+        <exec command="cd ${src.dir}/shell/ &amp;&amp; php ecomdev-phpunit.php -a magento-config --db-name ${db.name}_test --base-url http://${site.url}/" passthru="true" checkreturn="true"/>
+        <exec command="cd ${src.dir}/shell/ &amp;&amp; php ecomdev-phpunit.php -a fix-autoloader" passthru="true" checkreturn="true"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} -h${db.host} -e &quot;drop database if exists ${db.name}_test&quot;" passthru="true" checkreturn="true"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} -h${db.host} -e &quot;create database ${db.name}_test&quot;" passthru="true" checkreturn="true"/>
+        <exec command="${unittests.before}" passthru="true"/>
+        <exec command="cd ${src.dir} &amp;&amp; ../vendor/bin/phpunit --group ${unittests.modules}" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="casperjs" depends="-load-properties, -setup-dirs, -clean-build">
+        <echo msg="Starting casperjs tests" />
+        <exec command="cd ${jenkins.workspace}/tests/ &amp;&amp; casperjs test --url=http://${site.url}/ --user=kk --password='!securelocal?' ./ " passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="phpmd">
+        <echo msg="Checking Coding Standards using phpmd" />
+        <exec executable="${wizard.path}/vendor/bin/phpmd" passthru="true" checkreturn="true">
+            <arg path="${src.dir}/app"/>
+            <arg path="text"/>
+            <arg value="codesize"/>
+        </exec>
+    </target>
+
+    <target name="phpcs" depends="init">
+        <echo msg="Checking Coding Standards using phpcs" />
+        <exec executable="${wizard.path}/vendor/bin/phpcs" passthru="true" checkreturn="true">
+            <arg value="--standard=${wizard.path}/vendor/magento-ecg/coding-standard/Ecg"/>
+            <arg path="${src.dir}/app/code/local"/>
+        </exec>
+    </target>
+
+    <target name="phploc">
+        <echo msg="Measuring the size and analyzing the structure of a PHP project with phploc" />
+        <exec executable="${wizard.path}/vendor/bin/phploc" passthru="true" checkreturn="true">
+            <arg path="${src.dir}/app"/>
+        </exec>
+    </target>
+
+    <target name="pdepend">
+        <echo msg="Calculate software metrics using PHP_Depend" />
+        <exec executable="${wizard.path}/vendor/bin/pdepend" passthru="true" checkreturn="true">
+            <arg value="--jdepend-xml=${build.logs.dir}/pdepend/jdepend.xml"/>
+            <arg value="--jdepend-chart=${build.logs.dir}/pdepend/dependencies.svg"/>
+            <arg value="--overview-pyramid=${build.logs.dir}/pdepend/overview-pyramid.svg"/>
+            <arg value="--ignore=/code/core,/code/community"/>
+            <arg path="${src.dir}/app"/>
+        </exec>
+    </target>
+
+    <target name="phpcpd">
+        <echo msg="Find duplicate code using PHPCPD" />
+        <exec executable="${wizard.path}/vendor/bin/phpcpd" passthru="true" checkreturn="true">
+            <arg value="--log-pmd"/>
+            <arg value="${build.logs.dir}/pmd.xml"/>
+            <arg value="--exclude"/>
+            <arg value="code/core/"/>
+            <arg value="--exclude"/>
+            <arg value="code/community/"/>
+            <arg path="${src.dir}/app"/>
+        </exec>
+    </target>
+
+    <!-- Prepare for the new build for demo server -->
+    <target name="config-typo3" depends="-load-properties, -setup-dirs" description="Copying configs">
+        <echo message="Configuring typo3 for ${server.env}"/>
+
+        <available file="${src.dir}/.htaccess.${server.env}" property="env_htaccess_exists" type="file" />
+        <if>
+            <isset property="env_htaccess_exists"/>
+            <then>
+                <echo message="Using .htaccess.${server.env}"/>
+                <copy file="${src.dir}/.htaccess.${server.env}" tofile="${src.dir}/.htaccess" overwrite="true">
+                    <filterchain>
+                        <replacetokens begintoken="{{" endtoken="}}">
+                            <token key="path" value="${ssh.path}" />
+                        </replacetokens>
+                    </filterchain>
+                </copy>
+            </then>
+            <else>
+                <echo message="Using .htaccess"/>
+                <copy file="${src.dir}/.htaccess" tofile="${src.dir}/.htaccess" overwrite="true">
+                    <filterchain>
+                        <replacetokens begintoken="{{" endtoken="}}">
+                            <token key="path" value="${ssh.path}" />
+                        </replacetokens>
+                    </filterchain>
+                </copy>
+            </else>
+        </if>
+
+        <echo file="${src.dir}/typo3conf/AdditionalConfiguration.php"><![CDATA[<?php
+$GLOBALS['TYPO3_CONF_VARS']['DB']['database'] = '${db.name}';
+$GLOBALS['TYPO3_CONF_VARS']['DB']['host']     = '${db.host}';
+$GLOBALS['TYPO3_CONF_VARS']['DB']['username'] = '${db.user}';
+$GLOBALS['TYPO3_CONF_VARS']['DB']['password'] = '${db.pass}';
+$GLOBALS['TYPO3_CONF_VARS']['DB']['port'] = '${db.port}';
+$GLOBALS['TYPO3_CONF_VARS']['DB']['extTablesDefinitionScript'] = 'extTables.php';
+$GLOBALS['TYPO3_CONF_VARS']['BE']['fileCreateMask'] = '0660';
+$GLOBALS['TYPO3_CONF_VARS']['BE']['folderCreateMask'] = '2770';
+$GLOBALS['TYPO3_CONF_VARS']['SYS']['sitename'] = '${project.name} - ${environment}';
+        ]]></echo>
+        <if>
+            <isset property="gfx.im_version_5"/>
+            <then>
+                <echo msg="$GLOBALS['TYPO3_CONF_VARS']['GFX']['im_version_5'] = '${gfx.im_version_5}';" file="${src.dir}/typo3conf/AdditionalConfiguration.php" append="true" />
+            </then>
+        </if>
+        <if>
+            <isset property="gfx.im_path"/>
+            <then>
+                <echo msg="$GLOBALS['TYPO3_CONF_VARS']['GFX']['im_path'] = '${gfx.im_path}';" file="${src.dir}/typo3conf/AdditionalConfiguration.php" append="true" />
+            </then>
+            </if>
+    </target>
+
+    <!-- Prepare for the new build for demo server -->
+    <target name="config-neos" depends="-load-properties, -setup-dirs" description="Copying configs">
+        <echo message="Configuring neos for ${server.env}"/>
+
+        <available file="${src.dir}/.htaccess.${server.env}" property="env_htaccess_exists" type="file" />
+        <if>
+            <isset property="env_htaccess_exists"/>
+            <then>
+                <echo message="Using .htaccess.${server.env}"/>
+                <copy file="${src.dir}/.htaccess.${server.env}" tofile="${src.dir}/.htaccess" overwrite="true">
+                    <filterchain>
+                        <replacetokens begintoken="{{" endtoken="}}">
+                            <token key="path" value="${ssh.path}" />
+                        </replacetokens>
+                    </filterchain>
+                </copy>
+            </then>
+            <else>
+                <echo message="Using .htaccess"/>
+                <copy file="${src.dir}/.htaccess" tofile="${src.dir}/.htaccess" overwrite="true">
+                    <filterchain>
+                        <replacetokens begintoken="{{" endtoken="}}">
+                            <token key="path" value="${ssh.path}" />
+                        </replacetokens>
+                    </filterchain>
+                </copy>
+            </else>
+        </if>
+
+        <echo file="${src.dir}/Configuration/Settings.yaml"><![CDATA[
+TYPO3:
+  Flow:
+    persistence:
+      backendOptions:
+        driver: pdo_mysql
+        dbname: ${db.name}
+        user: ${db.user}
+        password: ${db.pass}
+        host: ${db.host}
+        ]]></echo>
+    </target>
+
+    <!-- Prepare for the new build for demo server. -->
+    <target name="config-magento" depends="-load-properties, -setup-dirs" description="Copying configs">
+        <echo message="Configuring magento: changing base_url, copying .htaccess, index.php, creating local.xml"/>
+        <echo message="Check if .htaccess.${server.env}"/>
+
+        <if>
+            <equals arg1="${environment}" arg2="dev"/>
+            <then>
+                <exec command="cd ${jenkins.workspace} &amp;&amp; ln -fs ${project.webroot} public" passthru="true" checkreturn="true"/>
+                <exec command="cd ${jenkins.workspace}/public &amp;&amp; ln -fs ../docs docs" passthru="true" checkreturn="true"/>
+            </then>
+        </if>
+
+        <available file="${src.dir}/index.php.${server.env}" property="env_index_php_exists" type="file" />
+        <if>
+            <isset property="env_index_php_exists"/>
+            <then>
+                <echo message="Using index.php.${server.env}"/>
+                <copy file="${src.dir}/index.php.${server.env}" tofile="${src.dir}/index.php" overwrite="true">
+                </copy>
+            </then>
+        </if>
+
+        <available file="${src.dir}/.htaccess.${server.env}" property="env_htaccess_exists" type="file" />
+        <if>
+            <isset property="env_htaccess_exists"/>
+            <then>
+                <echo message="Using .htaccess.${server.env}"/>
+                <copy file="${src.dir}/.htaccess.${server.env}" tofile="${src.dir}/.htaccess" overwrite="true">
+                    <filterchain>
+                        <replacetokens begintoken="{{" endtoken="}}">
+                            <token key="path" value="${ssh.path}" />
+                        </replacetokens>
+                    </filterchain>
+                </copy>
+            </then>
+            <else>
+                <echo message="Using .htaccess"/>
+                <copy file="${src.dir}/.htaccess" tofile="${src.dir}/.htaccess" overwrite="true">
+                    <filterchain>
+                        <replacetokens begintoken="{{" endtoken="}}">
+                            <token key="path" value="${ssh.path}" />
+                        </replacetokens>
+                    </filterchain>
+                </copy>
+            </else>
+        </if>
+
+        <copy file="${src.dir}/app/etc/local.xml.template" tofile="${src.dir}/app/etc/local.xml" overwrite="true">
+            <filterchain>
+                <replacetokens begintoken="{{" endtoken="}}">
+                    <!-- MySQL TOKENS -->
+                    <token key="date" value="Wed, 28 Nov 2012 14:09:09 +0000" />
+                    <token key="key" value="837b74b88bf3dfbb326e98ab4fcdf395" />
+                    <token key="db_prefix" value="" />
+                    <token key="db_name" value="${db.name}" />
+                    <token key="db_host" value="${db.host}" />
+                    <token key="db_user" value="${db.user}" />
+                    <token key="db_pass" value="${db.pass}" />
+                    <token key="db_init_statemants" value="SET NAMES utf8" />
+                    <token key="db_model" value="mysql4" />
+                    <token key="db_type" value="pdo_mysql" />
+                    <token key="db_pdo_type" value="" />
+                    <token key="session_save" value="files" />
+                    <token key="admin_frontname" value="${site.admin}" />
+                </replacetokens>
+            </filterchain>
+        </copy>
+
+        <copy file="${src.dir}/app/etc/local.xml" tofile="${src.dir}/app/etc/local.xml.phpunit" overwrite="true">
+        </copy>
+    </target>
+
+    <tstamp>
+        <format pattern="%Y%m%d_%H%M%S" property="build.time"/>
+    </tstamp>
+
+    <target name="backup" depends="backup-db, backup-media" description="Full Backup" unless="project.backup">
+        <property name="project.backup" value="true"/>
+    </target>
+
+    <target name="backup-magento-log" depends="-load-properties">
+        <exec command="mkdir -p ${backup.dir}/${project.name}/logs/${suffix}"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose -b ${ssh.auth}:${ssh.path}/var/log/ ${backup.dir}/${project.name}/logs/${suffix}/" passthru="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'rm -rf ${ssh.path}/var/log/*'" passthru="true"/>
+
+        <available file="${backup.dir}/${project.name}/logs/${suffix}/exception.log" property="exception_log_exists" type="file" />
+        <if>
+            <isset property="exception_log_exists"/>
+            <then>
+                <property name="exception_log_exists" value="1" override="true"/>
+                <loadfile property="log" srcFile="${backup.dir}/${project.name}/logs/${suffix}/exception.log"/>
+                <exec executable="php" outputProperty="exceptions.count">
+                    <arg value="-r" />
+                    <arg value="
+$file = '${backup.dir}/${project.name}/logs/${suffix}/exception.log';
+$contents = file_get_contents($file);
+$count = substr_count($contents, 'ERR (3):');
+echo $count;
+"/>
+                </exec>
+
+                <echo msg="${line.separator}${line.separator}${exceptions.count} EXCEPTIONS${line.separator}"></echo>
+
+                <exec executable="php" outputProperty="exceptions.lines">
+                    <arg value="-r" />
+                    <arg value="
+$lines = array();
+$file = '${backup.dir}/${project.name}/logs/${suffix}/exception.log';
+$handle = fopen($file, 'r');
+if ($handle) {
+    $errors = array();
+    while (($line = fgets($handle)) !== false) {
+        if (strpos($line, 'ERR (3):') !== false) {
+            $lines[] = $line;
+            $line = fgets($handle);
+            if (!isset($errors[$line])) {
+                $errors[$line] = 1;
+            } else {
+                $errors[$line]++;
+            }
+        }
+    }
+}
+fclose($handle);
+
+arsort($errors);
+foreach($errors as $error=>$count) {
+    echo '['.$count.'] '.$error.'${line.separator}';
+}
+"/>
+                </exec>
+
+                <echo msg="${line.separator}${exceptions.lines}${line.separator}"></echo>
+            </then>
+            <else>
+                <property name="exception_log_exists" value="0" override="true"/>
+                <echo msg="There is no exception log. Good work!"/>
+            </else>
+        </if>
+
+        <exec command="exit ${exception_log_exists};" checkreturn="true"/>
+    </target>
+
+    <target name="backup-typo3-log" depends="-load-properties, -setup-dirs">
+        <echo msg="[TODO] TYPO3 backup-log job is not avialable yet"/>
+    </target>
+
+    <target name="backup-db" depends="-load-properties-backup" description="Backup Database">
+        <exec command="scp ${backup.user}@${backup.host}:${backup.path}_database ${backup.dir}/${project.name}${suffix}_database" passthru="true"/>
+
+        <available file="${backup.dir}/${project.name}${suffix}_database" property="dynamic_database_exists" type="file" />
+
+        <if>
+            <equals arg1="${dynamic_database_exists}" arg2="true" />
+            <then>
+                <echo msg="Using dynamic db name"/>
+                <loadfile property="database" srcFile="${backup.dir}/${project.name}${suffix}_database"/>
+                <php expression="trim(${database})" returnProperty="db.name.current"/>
+            </then>
+        </if>
+
+        <if>
+            <not>
+                <isset property="db.name.current" />
+            </not>
+            <then>
+                <echo msg="Using static db name"/>
+                <property name="db.name.current" value="${db.name}" override="true"/>
+            </then>
+        </if>
+
+        <property name="exclude.tables" value="--ignore-table=${db.name.current}.index_event --ignore-table=${db.name.current}.index_process_event --ignore-table=${db.name.current}.kk_asynchflushcache --ignore-table=${db.name.current}.log_customer --ignore-table=${db.name.current}.log_quote --ignore-table=${db.name.current}.log_summary --ignore-table=${db.name.current}.log_summary_type --ignore-table=${db.name.current}.log_url --ignore-table=${db.name.current}.log_url_info --ignore-table=${db.name.current}.log_visitor --ignore-table=${db.name.current}.log_visitor_info --ignore-table=${db.name.current}.log_visitor_online --ignore-table=${db.name.current}.enterprise_logging_event --ignore-table=${db.name.current}.enterprise_logging_event_changes"/>
+
+        <echo msg="ssh ${backup.user}@${backup.host} 'mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name.current} &lt; ${backup.path}/hooks/backup_db_before.sql'"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name.current} &lt; ${backup.path}/hooks/backup_db_before.sql'" passthru="true"/>
+
+        <exec command="ssh ${backup.user}@${backup.host} 'mkdir ${backup.path}_backup'" passthru="true"/>
+        <echo msg="ssh ${backup.user}@${backup.host} 'mysqldump --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} --routines --triggers --no-data ${db.name.current} > ${backup.path}_backup/${project.name}${suffix}.sql'"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'mysqldump --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} --routines --triggers --no-data ${db.name.current} > ${backup.path}_backup/${project.name}${suffix}.sql'" passthru="true" checkreturn="true"/>
+
+        <echo msg="ssh ${backup.user}@${backup.host} 'mysqldump --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} --routines --triggers ${exclude.tables} ${db.name.current} >> ${backup.path}_backup/${project.name}${suffix}.sql'"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'mysqldump --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} --routines --triggers ${exclude.tables} ${db.name.current} >> ${backup.path}_backup/${project.name}${suffix}.sql'" passthru="true" checkreturn="true"/>
+
+        <echo msg="ssh ${backup.user}@${backup.host} 'gzip ${backup.path}_backup/${project.name}${suffix}.sql'"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'gzip ${backup.path}_backup/${project.name}${suffix}.sql'" passthru="true"  checkreturn="true"/>
+
+        <exec command="mkdir ${backup.dir}/${project.name}" passthru="true"/>
+        <exec command="scp ${backup.user}@${backup.host}:${backup.path}_backup/${project.name}${suffix}.sql.gz ${backup.dir}/${project.name}/${project.name}${suffix}.sql.gz"  passthru="true" checkreturn="true"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'rm -rf ${backup.path}_backup'" passthru="true" checkreturn="true"/>
+        <exec command="ln -sf ${backup.dir}/${project.name}/${project.name}${suffix}.sql.gz ${backup.dir}/${project.name}.sql.gz" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="backup-media" depends="-load-properties-backup" description="Backup Media">
+        <exec command="ssh ${backup.user}@${backup.host} 'mkdir -p ${backup.path}_backup'" checkreturn="true"/>
+        <echo msg="ssh ${backup.user}@${backup.host} 'tar -cf ${backup.path}_backup/${project.name}${suffix}_media.tar.gz -C ${backup.path} ${backup.filelist} ${exclude.files}'"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'tar -cf ${backup.path}_backup/${project.name}${suffix}_media.tar.gz -C ${backup.path} ${backup.filelist} ${exclude.files}'" passthru="true" checkreturn="true"/>
+        <exec command="mkdir ${backup.dir}/${project.name}" passthru="true"/>
+        <exec command="scp ${backup.user}@${backup.host}:${backup.path}_backup/${project.name}${suffix}_media.tar.gz ${backup.dir}/${project.name}/${project.name}${suffix}_media.tar.gz" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${backup.user}@${backup.host} 'rm -rf ${backup.path}_backup'" checkreturn="true"/>
+        <exec command="ln -fs ${backup.dir}/${project.name}/${project.name}${suffix}_media.tar.gz ${backup.dir}/${project.name}_media.tar.gz" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="reset-settings" depends="-load-properties, -setup-dirs" description="Import Database">
+        <echo msg="Changing url to http://${site.url}/ ..."/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;update core_config_data set value = 'http://${site.url}/' where path like '%base_url%';&quot;"/>
+
+        <echo msg="Changing emails to ${admin.email}..."/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'contacts/email/recipient_email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'trans_email/ident_general/email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'trans_email/ident_sales/email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'trans_email/ident_support/email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'trans_email/ident_custom1/email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'trans_email/ident_custom2/email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'webforms/email/email';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'webforms/email/email_reply_to';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_config_data SET value = '${admin.email}' WHERE path = 'webforms/email/email_from';&quot;"/>
+
+        <echo msg="Changing passwords to user: admin or kk, password: password..."/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE admin_user SET password=CONCAT(MD5('qXpassword'), ':qX') WHERE username='admin';&quot;"/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE admin_user SET password=CONCAT(MD5('qXpassword'), ':qX') WHERE username='kk';&quot;"/>
+
+        <echo msg="Disabling cache..."/>
+        <exec command="mysql --port=${db.port} -u${db.user} -p${db.pass} ${db.name} -e &quot;UPDATE core_cache_option SET value=0;&quot;"/>
+    </target>
+
+    <target name="-clean-build" depends="-load-properties, -setup-dirs" unless="build.cleaned">
+        <echo message="Deleting build directories" level="debug"/>
+
+        <delete dir="${build.dir}"/>
+
+        <echo message="Creating build directories" level="debug"/>
+
+        <mkdir dir="${build.dir}"/>
+        <mkdir dir="${build.api.dir}"/>
+        <mkdir dir="${build.codebrowser.dir}"/>
+        <mkdir dir="${build.dist.dir}"/>
+        <mkdir dir="${build.logs.dir}"/>
+        <mkdir dir="${build.pdepend.dir}"/>
+        <mkdir dir="${build.dir}"/>
+
+        <property name="build.cleaned" value="true"/>
+    </target>
+
+    <target name="-load-properties">
+        <property file="${defaults}" override="true"/>
+
+        <echo>Author: ${author.name}</echo>
+        <echo>Email: ${author.email}</echo>
+
+        <echo>env.JOB_NAME = ${env.JOB_NAME}</echo>
+
+        <exec executable="php" outputProperty="project.name">
+            <arg value="-r" />
+            <arg value="
+            $jenkins = '${env.JOB_NAME}';
+            list($project, $env) = explode('.', $jenkins);
+
+            echo $project;"/>
+        </exec>
+
+        <exec executable="php" outputProperty="environment">
+            <arg value="-r" />
+            <arg value="
+            $jenkins = '${env.JOB_NAME}';
+            list($project, $env) = explode('.', $jenkins);
+
+            echo $env;"/>
+        </exec>
+
+        <exec executable="php" outputProperty="project.name.safe">
+            <arg value="-r" />
+            <arg value="
+            $project = '${project.name}';
+            $project = str_replace('-', '', $project);
+
+            echo $project;"/>
+        </exec>
+
+        <echo msg="project: ${project.name}, env: ${environment}"/>
+
+        <property file="${wizard.path}/default.ini"/>
+
+        <property file="${wizard.path}/projects/${project.name}.ini"/>
+
+        <property name="suffix" value="${build.time}_${environment}" override="true"/>
+
+        <echo msg="Env: ${environment}"/>
+
+        <property name="ssh.host" value="${${environment}.ssh.host}" override="true"/>
+        <property name="server.env" value="${${environment}.server.env}" override="true"/>
+        <property name="ssh.user" value="${${environment}.ssh.user}" override="true"/>
+        <property name="ssh.auth" value="${ssh.user}@${ssh.host}" />
+        <property name="ssh.path" value="${${environment}.ssh.path}" override="true"/>
+        <property name="ssh.temp" value="${ssh.path}"/>
+        <property name="ssh.target" value="${ssh.temp}${suffix}" override="true"/>
+        <property name="ssh.backup" value="${ssh.temp}${suffix}_backup" override="true"/>
+
+        <property name="site.admin" value="${${environment}.site.admin}" override="true"/>
+        <property name="site.url" value="${${environment}.site.url}" override="true"/>
+
+        <property name="db.host" value="${${environment}.db.host}" override="true"/>
+        <property name="db.user" value="${${environment}.db.user}" override="true"/>
+        <property name="db.pass" value="${${environment}.db.pass}" override="true"/>
+
+        <if>
+            <isset property="${environment}.db.port"/>
+            <then>
+                <property name="db.port" value="${${environment}.db.port}" override="true"/>
+            </then>
+        </if>
+
+        <!--<property name="db.name" value="${environment}${suffix}" override="true"/>-->
+        <property name="db.name" value="${${environment}.db.name}" override="true"/>
+
+        <if>
+            <isset property="${environment}.gfx.im_version_5"/>
+            <then>
+                <property name="gfx.im_version_5" value="${${environment}.gfx.im_version_5}" override="true"/>
+            </then>
+        </if>
+        <if>
+            <isset property="${environment}.gfx.im_path"/>
+            <then>
+                <property name="gfx.im_path" value="${${environment}.gfx.im_path}" override="true"/>
+            </then>
+        </if>
+    </target>
+
+    <target name="-load-properties-backup">
+        <property file="${wizard.path}/default.ini" override="true"/>
+
+        <property file="${wizard.path}/projects/${project.name}.ini" override="true"/>
+        <!--<property file="build.properties" override="true"/>-->
+
+        <echo msg="Loaded backup ${backup.env} configuration"/>
+        <property name="suffix" value="_${build.time}_${backup.env}" override="true"/>
+
+        <property name="backup.host" value="${${backup.env}.ssh.host}" override="true"/>
+        <property name="backup.user" value="${${backup.env}.ssh.user}" override="true"/>
+        <property name="backup.auth" value="${ssh.user}@${ssh.host}" />
+        <property name="backup.path" value="${${backup.env}.ssh.path}" override="true"/>
+        <property name="backup.target" value="${ssh.path}" override="true"/>
+        <property name="backup.backup" value="${ssh.path}_backup" override="true"/>
+
+        <property name="site.admin" value="${${backup.env}.site.admin}" override="true"/>
+        <property name="site.url" value="${${backup.env}.site.url}" override="true"/>
+
+        <property name="db.host" value="${${backup.env}.db.host}" override="true"/>
+        <property name="db.user" value="${${backup.env}.db.user}" override="true"/>
+        <property name="db.pass" value="${${backup.env}.db.pass}" override="true"/>
+        <if>
+            <isset property="${backup.env}.db.port"/>
+            <then>
+                <property name="db.port" value="${${backup.env}.db.port}" override="true"/>
+            </then>
+        </if>
+        <property name="db.name" value="${${backup.env}.db.name}" override="true"/>
+    </target>
+
+    <target name="-setup-dirs" depends="-load-properties">
+        <!-- My project set up is as follows:
+
+        ProjectName
+         - build (all the build file stuff)
+         - - api (phpDocumentor-generated API documentation which is later uploaded via FTP)
+         - - code-browser (phpcb-generated code browser)
+         - - dist (distributable zip file of source generated here)
+         - - logs (log files from static analysis)
+         - - pdepend (SVG images generated from PHP_Depend)
+         - src (the actual source)
+         - nbproject (Netbeans project stuff)
+
+        By default the Phing built-in property $project.basedir points to my build file directory,
+        so here, we grab the path to the level above, and then create friendlier aliases.
+        -->
+
+        <property name="jenkins.workspace" value="${application.startdir}"/>
+        <echo msg="jenkins.workspace: ${jenkins.workspace}"/>
+
+        <property name="build.dir" value="${jenkins.workspace}/build"/>
+        <property name="build.dir" value="${jenkins.workspace}/build"/>
+        <property name="src.dir" value="${jenkins.workspace}/${project.webroot}"/>
+
+        <echo message="Assigning build directories to properties" level="debug"/>
+
+        <property name="build.api.dir" value="${build.dir}/api"/>
+        <property name="build.codebrowser.dir" value="${build.dir}/code-browser"/>
+        <property name="build.dist.dir" value="${build.dir}/dist"/>
+        <property name="build.dist.temp.dir" value="${build.dist.dir}/temp"/>
+        <property name="build.dist.zip.root.dir" value="${build.dist.temp.dir}/zip"/>
+        <property name="build.logs.dir" value="${build.dir}/logs"/>
+        <property name="build.pdepend.dir" value="${build.logs.dir}/pdepend"/>
+        <property name="build.tar" value="${backup.dir}/${project.name}${suffix}_code.tar.gz"/>
+    </target>
+
+    <target name="init" depends="-load-properties, -setup-dirs, -setup-filesets" unless="project.initialised">
+        <property name="project.initialised" value="true"/>
+    </target>
+
+    <!-- Add vendors or code will fail -->
+    <target name="install" description="Installing new vendors">
+        <exec command="composer install -d ${jenkins.workspace}" passthru="true" checkreturn="true"/>
+        <phingcall target="config-${project.type}"/>
+    </target>
+
+    <target name="deploy-full" depends="deploy-tar, deploy-db, deploy-media-symlink">
+        <phingcall target="clean-${project.type}-symlink"/>
+        <phingcall target="symlink"/>
+    </target>
+
+    <target name="deploy-magento" depends="deploy-sync, deploy-db-no-delete, deploy-media-direct">
+        <phingcall target="clean-${project.type}-direct"/>
+    </target>
+
+    <target name="deploy" depends="deploy-sync, deploy-db, deploy-media-direct" description="Deploy code, database, media and clean cache">
+        <phingcall target="clean-${project.type}-direct"/>
+    </target>
+
+    <target name="deploy-code" depends="deploy-sync">
+        <phingcall target="clean-${project.type}-direct"/>
+    </target>
+
+    <target name="deploy-tar" depends="build, dist">
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}'" checkreturn="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" checkreturn="true"/>
+
+        <echo msg="scp ${backup.dir}/${project.name}_code.tar.gz ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}_code.tar.gz"/>
+        <exec command="scp ${backup.dir}/${project.name}_code.tar.gz ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}_code.tar.gz" checkreturn="true"/>
+
+        <echo msg="ssh ${ssh.user}@${ssh.host} 'tar -C ${ssh.target} -pxvf ${ssh.target}_build/${project.name}_code.tar.gz'"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'tar -C ${ssh.target} -pxvf ${ssh.target}_build/${project.name}_code.tar.gz'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'rm -rf ${ssh.target}_build'" checkreturn="true"/>
+
+        <echo msg="sh install.sh ${environment}"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'cd ${ssh.target} &amp;&amp; [ -f install.sh ] &amp;&amp; sh install.sh ${environment}'" passthru="true"/>
+    </target>
+
+    <target name="server-setup" depends="build">
+        <echo msg="Setting owner ubuntu for /var/www/"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'sudo mkdir -p /var/www/'" passthru="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'sudo chown -R ubuntu:ubuntu /var/www/'" passthru="true"/>
+
+        <echo msg="Creating directory ${build.dir}"/>
+        <exec command="mkdir -p ${build.dir}"/>
+
+        <echo msg="Generating ${build.dir}/server-setup.sh"/>
+        <echo file="${build.dir}/server-setup.sh">
+            echo '\n\nUpdating apt cache...\n\n'
+            apt-get update
+
+            echo '\n\nInstalling mysql-server...\n\n'
+            apt-get -y install mysql-server
+
+            echo '\n\nInstalling web-server...\n\n'
+            apt-get -y install apache2 apache2-mpm-prefork apache2-utils libapache2-mod-php5 libapr1 libaprutil1 libdbd-mysql-perl libdbi-perl libnet-daemon-perl libplrpc-perl libpq5 mysql-client-5.5 mysql-common mysql-server mysql-server-5.5 php5-common php5-mysql php5-json php5-gd php5-curl php5-dev xvfb x11-xkb-utils xfonts-100dpi xfonts-75dpi xfonts-scalable xfonts-cyrillic xserver-xorg-core
+            a2enmod rewrite
+
+            echo '\n\nRestarting web-server and mysql...\n\n'
+            service apache2 start
+            service mysql start
+
+            echo '\n\nResetting mysql password...\n\n'
+            mysqladmin -u root password toor
+
+        </echo>
+
+        <echo msg="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" passthru="true"/>
+        <exec command="scp ${build.dir}/server-setup.sh ${ssh.user}@${ssh.host}:${ssh.target}_build/server-setup.sh" checkreturn="true"/>
+
+        <echo msg="Executing ${ssh.target}_build/server-setup.sh"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'sudo sh ${ssh.target}_build/server-setup.sh'" passthru="true"/>
+
+        <exec command="ssh ${ssh.user}@${ssh.host} 'sudo chown -R ubuntu:ubuntu /var/www/'" passthru="true"/>
+    </target>
+
+    <!-- Syncing only changed files -->
+    <target name="deploy-sync" depends="build">
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" passthru="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.backup}'" passthru="true"/>
+        <echo msg="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} --exclude-from=${sync.exclude.file} ${src.dir} ${ssh.auth}:${ssh.path}"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} --exclude-from=${sync.exclude.file} ${src.dir}/ ${ssh.auth}:${ssh.path}" passthru="true" checkreturn="true"/>
+
+        <if>
+            <equals arg1="${project.type}" arg2="magento"/>
+            <then>
+                <echo msg="Magento Hack: Syncing excluded media directories"/>
+                <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} ${src.dir}/app/design/adminhtml/default/default/template/media/ ${ssh.auth}:${ssh.path}/app/design/adminhtml/default/default/template/media" passthru="true"/>
+                <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} ${src.dir}/skin/adminhtml/default/default/media/ ${ssh.auth}:${ssh.path}/skin/adminhtml/default/default/media" passthru="true"/>
+                <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} ${src.dir}/js/tiny_mce/plugins/media/ ${ssh.auth}:${ssh.path}/js/tiny_mce/plugins/media" passthru="true"/>
+            </then>
+        </if>
+
+        <echo msg="sh install.sh ${environment}"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'cd ${ssh.path} &amp;&amp; [ -f install.sh ] &amp;&amp; sh install.sh ${environment}'" passthru="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'rm install.sh'" passthru="true"/>
+        <echo msg="http://${site.url}/"/>
+    </target>
+
+    <target name="deploy-sync-vendor">
+        <exec command="[ -d ${src.dir}/../vendor/ ] &amp;&amp; /usr/bin/rsync --delete -cdrpKzl --verbose --exclude-from=${sync.exclude.file} ${src.dir}/../vendor/ ${ssh.auth}:${ssh.path}/vendor/"  passthru="true"/>
+    </target>
+
+    <target name="htaccess" depends="build">
+        <copy file="${src.dir}/.htaccess" tofile="${build.dir}/.htaccess"/>
+        <echo file="${build.dir}/.htaccess" append="true">
+            AuthName     "Please log in"
+            AuthType     Basic
+            AuthUserFile ${ssh.path}/.htpasswd
+            require valid-user
+        </echo>
+
+        <exec executable="php" outputProperty="ht.cryptedpassword">
+            <arg value="-r" />
+            <arg value="
+$clearTextPassword = '${ht.pass}';
+
+$password = crypt($clearTextPassword, base64_encode($clearTextPassword));
+
+echo $password;
+"/>
+        </exec>
+
+        <echo file="${build.dir}/.htpasswd">${ht.user}:${ht.cryptedpassword}</echo>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose ${build.dir}/.htaccess ${ssh.auth}:${ssh.path}/" passthru="true" checkreturn="true"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose ${build.dir}/.htpasswd ${ssh.auth}:${ssh.path}/" passthru="true" checkreturn="true"/>
+    </target>
+
+    <!-- Syncing docs -->
+    <target name="deploy-docs" depends="init">
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose ${jenkins.workspace}/docs/ ${ssh.auth}:${ssh.docs}/docs/" passthru="true" checkreturn="true"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose /opt/wiki/config.json ${ssh.auth}:${ssh.docs}/docs/" passthru="true" checkreturn="true"/>
+        <exec command="mkdir -p ${build.dir}" passthru="true" checkreturn="true"/>
+        <echo file="${build.dir}/.htaccess">
+RewriteEngine On
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule !\.(gif|jpg|png|css|js|html|ico|zip|rar|pdf|xml|mp4|mpg|flv|swf|mkv|ogg|avi|woff|svg|eot|ttf|jar)$ index.php [L,QSA]
+
+AuthName     "Please log in"
+AuthType     Basic
+AuthUserFile ${ssh.docs}/.htpasswd
+require valid-user
+        </echo>
+
+        <exec executable="php" outputProperty="ht.cryptedpassword">
+            <arg value="-r" />
+            <arg value="
+$clearTextPassword = '${ht.pass}';
+
+$password = crypt($clearTextPassword, base64_encode($clearTextPassword));
+
+echo $password;
+"/>
+        </exec>
+
+        <echo file="${build.dir}/.htpasswd">${ht.user}:${ht.cryptedpassword}</echo>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose ${build.dir}/.htaccess ${ssh.auth}:${ssh.docs}/" passthru="true" checkreturn="true"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose ${build.dir}/.htpasswd ${ssh.auth}:${ssh.docs}/" passthru="true" checkreturn="true"/>
+    </target>
+
+    <!-- Uploading files to new directory -->
+    <target name="deploy-upload" depends="build">
+        <echo msg="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} --exclude-from=${sync.exclude.file} ${src.dir} ${ssh.auth}:${ssh.target}"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" checkreturn="true"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose -b --backup-dir=${ssh.backup} --exclude-from=${sync.exclude.file} ${src.dir} ${ssh.auth}:${ssh.target}" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="symlink">
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}_remove'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'mv $(readlink -f ${ssh.path}_last) ${ssh.path}_remove/'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.path}_remove'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'ln -sfn $(readlink -f ${ssh.path}) ${ssh.path}_last'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'ln -sfn ${ssh.target} ${ssh.path}'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="rollback" depends="init">
+        <exec command="ssh ${ssh.auth} 'ln -sfn $(readlink -f ${ssh.path}_last) ${ssh.path}'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="clean-typo3-symlink" depends="-load-properties">
+        <echo msg="ssh ${ssh.auth} 'chmod 777 ${ssh.target}'"/>
+        <exec command="ssh ${ssh.auth} 'chmod 777 ${ssh.target}'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.target}/typo3temp'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.target}/fileadmin'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.target}/typo3conf'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}_build'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="clean-neos-direct">
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.path}/Packages'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'cd ${ssh.path}; ./flow flow:cache:flush --force'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'cd ${ssh.path}; ./flow node:repair'" passthru="true" checkreturn="true"/>
+
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}_build'"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.backup}'"/>
+    </target>
+
+    <target name="clean-typo3-direct">
+        <echo msg="ssh ${ssh.auth} 'rm -rf ${ssh.path}/typo3temp'. Recreate temp, ext, l10n, chmod 777 for those folders"/>
+
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.path}/typo3temp'" passthru="true" checkreturn="true"/>
+
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/typo3temp'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/typo3temp/ext'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/typo3temp/l10n'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/fileadmin'" passthru="true" checkreturn="true"/>
+
+        <exec command="ssh ${ssh.auth} 'chmod 775 ${ssh.path}/'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod 770 ${ssh.path}/typo3conf'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod 770 ${ssh.path}/typo3conf/ext'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod 770 ${ssh.path}/typo3conf/l10n'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod 770 ${ssh.path}/typo3temp'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod 770 ${ssh.path}/fileadmin'" passthru="true"/>
+
+        <phingcall target="typo3-clear-cache"/>
+
+        <echo msg="ssh ${ssh.auth} 'rm -rf ${ssh.target}_build'"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}_build'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="clean-magento-direct">
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.path}/var/cache'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.path}/var/tmp'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/var/log'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/var/cache'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/var/tmp'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod 777 ${ssh.path}/var/cache'" passthru="true"/>
+
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}_build'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="clean-magento-symlink">
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.target}/media'"  passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.target}/var'" passthru="true" checkreturn="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.target}/var/log'" passthru="true" checkreturn="true"/>
+
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}/var/cache'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}/var/cache/* ${ssh.target}/var/session/* ${ssh.target}/var/var/locks/* ${ssh.target}/var/full_page_cache/* ${ssh.target}/var/tmp/*'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}/downloader/pearlib/cache/* ${ssh.target}/downloader/pearlib/download/*'" passthru="true"/>
+
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.target}_build'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="deploy-db" depends="init">
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}'" checkreturn="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" checkreturn="true"/>
+
+        <echo msg="Installing database ${db.name} and url http://${site.url}"/>
+        <echo msg="Uploading dump to ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}.sql.gz"/>
+        <exec command="scp ${backup.dir}/${project.name}.sql.gz ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}.sql.gz" checkreturn="true"/>
+        <echo msg="install-${project.type}"/>
+        <phingcall target="install-${project.type}"/>
+    </target>
+
+    <target name="import-db" depends="init">
+        <exec command="mkdir -p ${ssh.target}_build" checkreturn="true"/>
+        <echo msg="Downloading dump ${project.name}.sql.gz"/>
+        <echo msg="scp ${backup.ssh.user}@${backup.ssh.host}:${backup.dir}/${project.name}.sql.gz ${ssh.target}_build/${project.name}.sql.gz"/>
+
+        <exec command="scp ${backup.ssh.user}@${backup.ssh.host}:${backup.dir}/${project.name}.sql.gz ${ssh.target}_build/${project.name}.sql.gz" checkreturn="true" passthru="true"/>
+        <echo msg="install-${project.type}"/>
+        <phingcall target="install-${project.type}"/>
+    </target>
+
+    <target name="deploy-db-no-delete" depends="init">
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" passthru="true"/>
+        <echo msg="Installing database ${db.name} and url http://${site.url}"/>
+        <echo msg="Uploading dump to ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}.sql.gz"/>
+        <exec command="scp ${backup.dir}/${project.name}.sql.gz ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}.sql.gz" passthru="true" checkreturn="true"/>
+        <echo msg="install-${project.type}"/>
+        <phingcall target="install-magento"/>
+    </target>
+
+    <target name="install-typo3">
+        <echo msg="${ssh.target}_build/update.sh"/>
+        <exec command="mkdir -p ${build.dir}"/>
+        <echo file="${build.dir}/update.sh">
+            set -e
+            echo 'Recreating database ${db.name}...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} -e &quot;drop database if exists ${db.name}&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} -e &quot;create database ${db.name}&quot;
+
+            echo 'Importing database ${db.name}...'
+            gunzip &lt; ${ssh.target}_build/${project.name}.sql.gz | mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -A -D${db.name}
+
+            echo 'Removing cache...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_imagesizes;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_md5params;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_treelist;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_typo3temp_log;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_hash;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_hash_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pages;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pages_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pagesection;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pagesection_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_rootline;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_rootline_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE tx_yag_domain_model_resolutionfilecache;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE tx_ncstaticfilecache_file;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_datamapfactory_datamap;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_datamapfactory_datamap_tags;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_object;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_object_tags;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_reflection;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_reflection_tags;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_typo3dbbackend_queries;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_typo3dbbackend_queries_tags;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_typo3dbbackend_tablecolumns;&quot; | exit 0
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_extbase_typo3dbbackend_tablecolumns_tags;&quot; | exit 0
+        </echo>
+        <echo file="${build.dir}/database">${db.name}</echo>
+        <if>
+            <equals arg1="${environment}" arg2="dev"/>
+            <then>
+                <echo>Local install</echo>
+                <exec command="sh ${build.dir}/update.sh" passthru="true" checkreturn="true"/>
+            </then>
+            <else>
+                <echo>SSH install</echo>
+                <exec command="scp ${build.dir}/update.sh ${ssh.user}@${ssh.host}:${ssh.target}_build/update.sh" checkreturn="true"/>
+                <exec command="scp ${build.dir}/database ${ssh.user}@${ssh.host}:${ssh.path}_database" checkreturn="true"/>
+                <exec command="ssh ${ssh.user}@${ssh.host} 'sh ${ssh.target}_build/update.sh'" passthru="true" checkreturn="true"/>
+                <exec command="ssh ${ssh.user}@${ssh.host} 'mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} &lt; ${ssh.path}/hooks/${server.env}_deploy_after.sql" passthru="true" checkreturn="false" />
+            </else>
+        </if>
+    </target>
+
+    <target name="typo3-clear-cache">
+        <echo msg="${ssh.target}_build/update.sh"/>
+        <exec command="mkdir -p ${build.dir}"/>
+        <echo file="${build.dir}/update.sh">
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} -e &quot;create database if not exists ${db.name}&quot;
+            echo 'Removing cache...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_imagesizes;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_md5params;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_treelist;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cache_typo3temp_log;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_hash;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_hash_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pages;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pages_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pagesection;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_pagesection_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_rootline;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE cf_cache_rootline_tags;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE tx_yag_domain_model_resolutionfilecache;&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;TRUNCATE tx_ncstaticfilecache_file;&quot;
+        </echo>
+        <echo file="${build.dir}/database">${db.name}</echo>
+        <exec command="scp ${build.dir}/update.sh ${ssh.user}@${ssh.host}:${ssh.target}_build/update.sh"  passthru="true" checkreturn="true"/>
+        <exec command="scp ${build.dir}/database ${ssh.user}@${ssh.host}:${ssh.path}_database" checkreturn="true"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'sh ${ssh.target}_build/update.sh'" passthru="true" />
+    </target>
+
+    <target name="install-magento">
+        <exec command="mkdir -p ${build.dir}"/>
+        <echo file="${build.dir}/update.sh">
+            set -e
+            echo 'Recreating database ${db.name}...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} -e &quot;drop database if exists ${db.name}&quot;
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} -e &quot;create database ${db.name}&quot;
+
+            echo 'Importing database ${db.name}...'
+            gunzip &lt; ${ssh.target}_build/${project.name}.sql.gz | mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -A -D${db.name}
+
+            echo 'Applying configuration for http://${site.url}/...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;update core_config_data set value = 'http://${site.url}/' where path like '%base_url%';&quot;
+
+            echo 'Applying cookie domain...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;update core_config_data set value = '${site.url}' where path = 'web/cookie/cookie_domain';&quot;
+
+            echo 'Enabling developer toolbar only for ip 87.139.233.163...'
+            mysql --port=${db.port} -h${db.host} -u${db.user} -p${db.pass} ${db.name} -e &quot;update core_config_data set value = '87.139.233.163' where path = 'dev/restrict/allow_ips';&quot;
+        </echo>
+        <if>
+            <equals arg1="${environment}" arg2="dev"/>
+            <then>
+                <echo>Local install</echo>
+                <exec command="sh ${build.dir}/update.sh" passthru="true" checkreturn="true"/>
+            </then>
+            <else>
+                <echo>SSH install</echo>
+                <exec command="scp ${build.dir}/update.sh ${ssh.user}@${ssh.host}:${ssh.target}_build/update.sh" checkreturn="true"/>
+                <exec command="ssh ${ssh.user}@${ssh.host} 'sh ${ssh.target}_build/update.sh'" passthru="true" checkreturn="true"/>
+                <exec command="ssh ${ssh.user}@${ssh.host} 'mysql -h${db.host} -u${db.user} -p${db.pass} ${db.name} &lt; ${ssh.path}/hooks/${server.env}_deploy_after.sql'" passthru="true" checkreturn="false" />
+            </else>
+        </if>
+    </target>
+
+    <target name="deploy-media-symlink" depends="init">
+        <echo msg="scp ${backup.dir}/${project.name}_media.tar.gz ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}_media.tar.gz"/>
+        <exec command="scp ${backup.dir}/${project.name}_media.tar.gz ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}_media.tar.gz" passthru="true" logoutput="true" checkreturn="true"/>
+
+        <echo msg="ssh ${ssh.user}@${ssh.host} 'tar -C ${ssh.target} -pxvf ${ssh.target}_build/${project.name}_media.tar.gz'"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'tar -C ${ssh.target} -pxvf ${ssh.target}_build/${project.name}_media.tar.gz'" passthru="true" checkreturn="true"/>
+    </target>
+
+    <target name="deploy-media-direct" depends="init">
+        <exec command="ssh ${ssh.user}@${ssh.host} 'mkdir -p ${ssh.target}_build'" checkreturn="true"/>
+        
+        <echo msg="/usr/bin/rsync --delete -cdrpKzl --verbose $(readlink -f ${backup.dir}/${project.name}_media.tar.gz) ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}_media.tar.gz"/>
+        <exec command="/usr/bin/rsync --delete -cdrpKzl --verbose $(readlink -f ${backup.dir}/${project.name}_media.tar.gz) ${ssh.user}@${ssh.host}:${ssh.target}_build/${project.name}_media.tar.gz" passthru="true" logoutput="true" checkreturn="true"/>
+
+        <echo msg="ssh ${ssh.user}@${ssh.host} 'tar -C ${ssh.path} -pxvf ${ssh.target}_build/${project.name}_media.tar.gz'"/>
+        <exec command="ssh ${ssh.user}@${ssh.host} 'tar -C ${ssh.path} -pxvf ${ssh.target}_build/${project.name}_media.tar.gz'" passthru="true"/>
+
+        <exec command="ssh ${ssh.auth} 'rm -rf ${ssh.path}/media/catalog/product/cache'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'mkdir -p ${ssh.path}/media/catalog/product/cache'" passthru="true"/>
+        <exec command="ssh ${ssh.auth} 'chmod -R 777 ${ssh.path}/media/catalog/product/cache'" passthru="true" />
+    </target>
+
+    <target name="-setup-filesets">
+        <patternset id="zip">
+            <!-- Exclude Mac / Windows / version control artifacts from zip -->
+            <exclude name="**/.DS_Store"/>
+            <exclude name="**/Thumbs.db"/>
+            <exclude name=".svn/"/>
+            <exclude name=".git/"/>
+            <exclude name="composer*"/>
+            <exclude name="README*"/>
+            <exclude name="build/"/>
+            <exclude name="design/"/>
+        </patternset>
+
+        <fileset dir="${src.dir}" id="zip.files">
+            <patternset refid="zip"/>
+        </fileset>
+    </target>
+
+    <target name="dist" depends="build" description="Create distributable file">
+        <mkdir dir="${build.dist.temp.dir}"/>
+        <mkdir dir="${build.dist.zip.root.dir}"/>
+        <copy todir="${build.dist.zip.root.dir}">
+            <fileset refid="zip.files"/>
+        </copy>
+
+        <exec command="tar -cf ${build.tar} -C ${build.dist.zip.root.dir} ." passthru="true" checkreturn="true"/>
+        <exec command="ln -sf ${build.tar} ${backup.dir}/${project.name}_code.tar.gz" passthru="true" checkreturn="true"/>
+
+        <delete dir="${build.dist.temp.dir}"/>
+    </target>
+
+    <target name="deploy-magento-test">
+        <phingcall target="init">
+            <property name="environment" value="test" />
+        </phingcall>
+        <phingcall target="deploy-db-no-delete">
+            <property name="environment" value="test" />
+        </phingcall>
+        <phingcall target="deploy-media-direct">
+            <property name="environment" value="test" />
+        </phingcall>
+    </target>
+
+    <target name="deploy-magento-staging">
+        <phingcall target="init">
+            <property name="environment" value="staging" />
+        </phingcall>
+        <phingcall target="deploy-db-no-delete">
+            <property name="environment" value="staging" />
+        </phingcall>
+        <phingcall target="deploy-media-direct">
+            <property name="environment" value="staging" />
+        </phingcall>
+    </target>
+
+    <target name="deploy-magento-sk">
+        <phingcall target="init">
+            <property name="environment" value="sk" />
+        </phingcall>
+        <phingcall target="deploy-db-no-delete">
+            <property name="environment" value="sk" />
+        </phingcall>
+        <phingcall target="deploy-media-direct">
+            <property name="environment" value="sk" />
+        </phingcall>
+    </target>
+
+    <target name="deploy-magento-cb">
+        <phingcall target="init">
+            <property name="environment" value="cb" />
+        </phingcall>
+        <phingcall target="deploy-db-no-delete">
+            <property name="environment" value="cb" />
+        </phingcall>
+        <phingcall target="deploy-media-direct">
+            <property name="environment" value="cb" />
+        </phingcall>
+    </target>
+
+    <target name="server-cleanup" depends="-load-properties-backup">
+        <echo msg="Starting weekly clean up"/>
+        <echo msg=""/>
+        <exec command="find ${backup.dir}/*/*_*_*gz -type f -mtime +7 -exec echo {} \;" passthru="true" checkreturn="true"/>
+        <exec command="find ${backup.dir}/*/*_*_*gz -type f -mtime +7 -exec rm {} \;" passthru="true" checkreturn="true"/>
+        <echo msg=""/>
+        <echo msg="Finished weekly clean up"/>
+        <echo msg=""/>
+        <echo msg="Backup statistics"/>
+        <exec command="find ${backup.dir}/* -maxdepth 0 -type d -exec du -hs {} \;| sort -r -h" passthru="true" checkreturn="true"/>
+        <echo msg="Virtualhosts statistics"/>
+        <exec command="find /srv/www/* -maxdepth 0 -type d -exec du -hs {} \;| sort -r -h" passthru="true" checkreturn="true"/>
+        <echo msg="Server statistics"/>
+        <echo msg=""/>
+        <exec command="df -h" passthru="true" checkreturn="true"/>
+        <echo msg=""/>
+        <exec command="df /srv | awk '{ print $5 }' | tail -n 1 | sed 's/%//'" outputProperty="hdd.usage"/>
+        <echo msg="Disk Usage: ${hdd.usage}% (Quota: ${hdd.max}%)"/>
+        <exec command="php -r 'echo (${hdd.usage} &lt; ${hdd.max})?0:1;'" outputProperty="hdd.usage.success" />
+        <exec command="exit ${hdd.usage.success};" checkreturn="true"/>
+    </target>
+</project>

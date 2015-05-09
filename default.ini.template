@@ -1,0 +1,42 @@
+exclude.files = --exclude=.ssh\* --exclude=\*tmp\* --exclude=\*.viminfo\* --exclude=\*.thumbs\* --exclude=\*.bash_history\* --exclude=\*cache\*  --exclude=\*backup\* --exclude=\*import\*
+
+db.port = 3306
+
+sync.exclude.file       = ${wizard.path}/sync.exclude
+
+admin.email             = email@example.com
+
+backup.dir              = /srv/backup
+
+backup.ssh.user         = ubuntu
+backup.ssh.host         = 192.168.1.200
+backup.ssh.path         = /srv/www/backup
+
+backup.db.user          = backup
+backup.db.password      = password
+backup.db.name          = ${project.name.safe}
+
+ssh.temp = ${ssh.path}
+
+# test
+test.server.env  = test
+test.ssh.host    = 192.168.1.1
+test.ssh.user    = ubuntu
+test.ssh.path    = /srv/www/${project.name}.test.your-company.com/public
+test.site.url    = ${project.name}.your-company.com
+test.site.admin  = admin
+test.db.host     = 192.168.1.1
+test.db.user     = test
+test.db.pass     = password
+test.db.name     = ${project.name.safe}_${environment}
+
+# dev
+dev.ssh.host    = 127.0.0.1
+dev.ssh.user    = vagrant
+dev.ssh.path    = ${project.basedir}
+dev.site.url    = ${project.name}.dev
+dev.site.admin  = admin
+dev.db.host     = 127.0.0.1
+dev.db.user     = root
+dev.db.pass     = toor
+dev.db.name     = ${project.name.safe}_${environment} 
